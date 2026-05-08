@@ -12,14 +12,13 @@ def admin_section():
     pwd = st.text_input("Nhập mật khẩu Admin:", type="password")
     
     if pwd == st.secrets.get("admin_password", "123"):
-        tab_upload, tab_delete = st.tabs(["Tải lên đề mới", "Xóa đề thi"])
+        # Thêm tab "Tải xuống đề thi"
+        tab_upload, tab_delete, tab_download = st.tabs(["Tải lên đề mới", "Xóa đề thi", "Tải xuống đề thi"])
         
         # --- TAB TẢI LÊN ---
         with tab_upload:
             st.subheader("Tải lên đề thi")
             existing_subjects = [d for d in os.listdir(DATA_DIR) if os.path.isdir(os.path.join(DATA_DIR, d))]
-            
-            # Logic chống nhập sai tên môn
             options = ["-- Chọn môn --"] + existing_subjects + ["+ Thêm môn học mới"]
             subject_choice = st.selectbox("Môn học:", options)
             
@@ -61,6 +60,34 @@ def admin_section():
                             st.rerun() 
                     else:
                         st.info("Không có đề thi nào trong môn này.")
+                        
+        # --- TAB TẢI XUỐNG ---
+        with tab_download:
+            st.subheader("Tải xuống đề thi")
+            subjects = [d for d in os.listdir(DATA_DIR) if os.path.isdir(os.path.join(DATA_DIR, d))]
+            if not subjects:
+                st.info("Chưa có môn học nào.")
+            else:
+                dl_subject = st.selectbox("Chọn môn:", subjects, key="dl_sub")
+                if dl_subject:
+                    sub_dir = os.path.join(DATA_DIR, dl_subject)
+                    files = [f for f in os.listdir(sub_dir) if f.endswith('.csv')]
+                    
+                    if files:
+                        dl_file = st.selectbox("Chọn đề cần tải:", files, key="dl_file")
+                        file_path = os.path.join(sub_dir, dl_file)
+                        
+                        # Nút bấm để tải file về máy
+                        with open(file_path, "rb") as file:
+                            st.download_button(
+                                label=f"⬇️ Tải xuống file {dl_file}",
+                                data=file,
+                                file_name=dl_file,
+                                mime="text/csv"
+                            )
+                    else:
+                        st.info("Không có đề thi nào trong môn này.")
+                        
     elif pwd != "":
         st.error("Sai mật khẩu!")
         
@@ -68,7 +95,6 @@ def take_quiz_section():
     st.header("Làm bài kiểm tra")
     
     subjects = [d for d in os.listdir(DATA_DIR) if os.path.isdir(os.path.join(DATA_DIR, d))]
-    
     if not subjects:
         st.warning("Hiện chưa có dữ liệu môn học nào.")
         return
@@ -89,9 +115,11 @@ def take_quiz_section():
             file_path = os.path.join(subject_dir, selected_file)
             df = pd.read_csv(file_path)
             
+            # ĐÂY LÀ DÒNG SỬA LỖI DẤU CÁCH: Cắt bỏ khoảng trắng thừa ở tên cột
+            df.columns = df.columns.str.strip() 
+            
             st.write(f"### Đang làm bài: {selected_file} - Môn: {selected_subject}")
             
-            # Chọn chế độ làm bài
             mode = st.radio("Chế độ làm bài:", ["Làm tất cả cùng lúc", "Làm từng câu một"], horizontal=True)
             
             if mode == "Làm tất cả cùng lúc":
