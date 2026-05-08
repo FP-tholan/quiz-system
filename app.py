@@ -11,17 +11,24 @@ def admin_section():
     st.header("Quản lý Đề thi (Admin)")
     pwd = st.text_input("Nhập mật khẩu Admin:", type="password")
     
-    # Kiểm tra mật khẩu (thêm .get() để tránh lỗi nếu quên tạo file secrets.toml)
     if pwd == st.secrets.get("admin_password", "123"):
-        # Dùng st.tabs để chia giao diện thành 2 phần: Upload và Xóa
         tab_upload, tab_delete = st.tabs(["Tải lên đề mới", "Xóa đề thi"])
         
         # --- TAB TẢI LÊN ---
         with tab_upload:
             st.subheader("Tải lên đề thi")
             existing_subjects = [d for d in os.listdir(DATA_DIR) if os.path.isdir(os.path.join(DATA_DIR, d))]
-            subject = st.text_input("Nhập tên môn học (hoặc tạo môn mới):").strip()
             
+            # Logic chống nhập sai tên môn
+            options = ["-- Chọn môn --"] + existing_subjects + ["+ Thêm môn học mới"]
+            subject_choice = st.selectbox("Môn học:", options)
+            
+            subject = ""
+            if subject_choice == "+ Thêm môn học mới":
+                subject = st.text_input("Nhập tên môn học mới:").strip()
+            elif subject_choice != "-- Chọn môn --":
+                subject = subject_choice
+                
             if subject:
                 subject_dir = os.path.join(DATA_DIR, subject)
                 if not os.path.exists(subject_dir):
@@ -51,12 +58,12 @@ def admin_section():
                         if st.button("Xóa đề này", type="primary"):
                             os.remove(os.path.join(sub_dir, del_file))
                             st.success(f"Đã xóa thành công file {del_file}!")
-                            st.rerun() # Tải lại trang để cập nhật danh sách
+                            st.rerun() 
                     else:
                         st.info("Không có đề thi nào trong môn này.")
     elif pwd != "":
         st.error("Sai mật khẩu!")
-
+        
 def take_quiz_section():
     st.header("Làm bài kiểm tra")
     
