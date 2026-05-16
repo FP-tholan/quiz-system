@@ -1,23 +1,39 @@
 import streamlit as st
 import pandas as pd
 import os
+from github import Github
 
 # Cấu trúc gốc
 DATA_DIR = "data"
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
 
+# Khởi tạo kết nối GitHub
+def get_github_repo():
+    try:
+        g = Github(st.secrets["github_token"])
+        repo = g.get_repo(st.secrets["github_repo"])
+        return repo
+    except Exception as e:
+        st.error(f"Lỗi kết nối GitHub. Hãy kiểm tra lại secrets. Chi tiết lỗi: {e}")
+        return None
+
 def admin_section():
     st.header("Quản lý Đề thi (Admin)")
     pwd = st.text_input("Nhập mật khẩu Admin:", type="password")
     
     if pwd == st.secrets.get("admin_password", "123"):
-        # Thêm tab "Tải xuống đề thi"
         tab_upload, tab_delete, tab_download = st.tabs(["Tải lên đề mới", "Xóa đề thi", "Tải xuống đề thi"])
+        repo = get_github_repo()
         
         # --- TAB TẢI LÊN ---
         with tab_upload:
             st.subheader("Tải lên đề thi")
+            
+            st.info('''**Lưu ý định dạng file .csv hợp lệ:**
+"Câu hỏi","Đáp án A","Đáp án B","Đáp án C","Đáp án D","Đáp án đúng"
+"Trước năm 26 tuổi, Issac Newton chứng minh được điều nào dưới đây ?","Định luật vạn vật hấp dẫn","Bản chất của ánh sáng","Ba định luật chuyển động","Tất cả đều đúng","D"''')
+            
             existing_subjects = [d for d in os.listdir(DATA_DIR) if os.path.isdir(os.path.join(DATA_DIR, d))]
             options = ["-- Chọn môn --"] + existing_subjects + ["+ Thêm môn học mới"]
             subject_choice = st.selectbox("Môn học:", options)
@@ -34,11 +50,23 @@ def admin_section():
                     os.makedirs(subject_dir)
                     
                 uploaded_file = st.file_uploader("Chọn file CSV", type=["csv"], key="upload_csv")
-                if uploaded_file is not None:
+                if uploaded_file is not None and repo is not None:
                     file_path = os.path.join(subject_dir, uploaded_file.name)
-                    with open(file_path, "wb") as f:
-                        f.write(uploaded_file.getbuffer())
-                    st.success(f"Đã lưu thành công đề '{uploaded_file.name}' vào môn '{subject}'")
+                    github_path = f"{DATA_DIR}/{subject}/{uploaded_file.name}"
+                    
+                    with st.spinner("Đang đẩy file lên hệ thống GitHub..."):
+                        try:
+                            # 1. Đẩy file lên GitHub
+                            content = uploaded_file.getvalue()
+                            repo.create_file(github_path, f"Upload {uploaded_file.name} via web", content)
+                            
+                            # 2. Lưu file ở local (container) để hệ thống đọc được ngay
+                            with open(file_path, "wb") as f:
+                                f.write(uploaded_file.getbuffer())
+                                
+                            st.success(f"Đã lưu thành công đề '{uploaded_file.name}' vào môn '{subject}' và đồng bộ lên GitHub!")
+                        except Exception as e:
+                            st.error(f"Có lỗi khi đẩy lên GitHub (Có thể file đã tồn tại). Lỗi: {e}")
 
         # --- TAB XÓA ---
         with tab_delete:
@@ -54,10 +82,24 @@ def admin_section():
                     
                     if files:
                         del_file = st.selectbox("Chọn đề cần xóa:", files, key="del_file")
-                        if st.button("Xóa đề này", type="primary"):
-                            os.remove(os.path.join(sub_dir, del_file))
-                            st.success(f"Đã xóa thành công file {del_file}!")
-                            st.rerun() 
+                        if st.button("Xóa đề này", type="primary") and repo is not None:
+                            github_path = f"{DATA_DIR}/{del_subject}/{del_file}"
+                            local_path = os.path.join(sub_dir, del_file)
+                            
+                            with st.spinner("Đang xóa file trên hệ thống GitHub..."):
+                                try:
+                                    # 1. Xóa trên GitHub
+                                    contents = repo.get_contents(github_path)
+                                    repo.delete_file(contents.path, f"Delete {del_file} via web", contents.sha)
+                                    
+                                    # 2. Xóa ở local
+                                    if os.path.exists(local_path):
+                                        os.remove(local_path)
+                                        
+                                    st.success(f"Đã xóa vĩnh viễn file {del_file}!")
+                                    st.rerun() 
+                                except Exception as e:
+                                    st.error(f"Có lỗi khi xóa trên GitHub. Lỗi: {e}")
                     else:
                         st.info("Không có đề thi nào trong môn này.")
                         
@@ -77,7 +119,6 @@ def admin_section():
                         dl_file = st.selectbox("Chọn đề cần tải:", files, key="dl_file")
                         file_path = os.path.join(sub_dir, dl_file)
                         
-                        # Nút bấm để tải file về máy
                         with open(file_path, "rb") as file:
                             st.download_button(
                                 label=f"⬇️ Tải xuống file {dl_file}",
@@ -90,7 +131,7 @@ def admin_section():
                         
     elif pwd != "":
         st.error("Sai mật khẩu!")
-        
+
 def take_quiz_section():
     st.header("Làm bài kiểm tra")
     
@@ -114,8 +155,6 @@ def take_quiz_section():
         if selected_file:
             file_path = os.path.join(subject_dir, selected_file)
             df = pd.read_csv(file_path)
-            
-            # ĐÂY LÀ DÒNG SỬA LỖI DẤU CÁCH: Cắt bỏ khoảng trắng thừa ở tên cột
             df.columns = df.columns.str.strip() 
             
             st.write(f"### Đang làm bài: {selected_file} - Môn: {selected_subject}")
@@ -133,15 +172,13 @@ def render_quiz_all(df):
         user_answers = {}
         for index, row in df.iterrows():
             st.markdown(f"**Câu {index + 1}: {row['Câu hỏi']}**")
-            
             options_display = {"A": f"A. {row['Đáp án A']}", "B": f"B. {row['Đáp án B']}", "C": f"C. {row['Đáp án C']}", "D": f"D. {row['Đáp án D']}"}
-            
             user_choice = st.radio(
                 label="Chọn đáp án:",
                 options=["A", "B", "C", "D"],
                 format_func=lambda x: options_display[x],
                 key=f"q_all_{index}",
-                index=None, # ĐÃ SỬA: Không chọn mặc định đáp án A
+                index=None,
                 label_visibility="collapsed"
             )
             user_answers[index] = user_choice
@@ -169,16 +206,14 @@ def render_quiz_all(df):
         st.metric(label="Điểm (Thang 10)", value=round((score / len(df)) * 10, 2))
 
 def render_quiz_step_by_step(df, file_name):
-    # Khởi tạo Session State nếu chuyển sang đề khác hoặc mới bắt đầu
     if "current_quiz" not in st.session_state or st.session_state.current_quiz != file_name:
         st.session_state.current_quiz = file_name
-        st.session_state.current_q = 0    # Câu hỏi hiện tại
-        st.session_state.score = 0        # Số điểm
-        st.session_state.answered = False # Đã nộp câu trả lời cho câu hỏi này chưa?
-        st.session_state.choice = None    # Đáp án người dùng chọn
-        st.session_state.results = []     # Lưu kết quả tổng hợp
+        st.session_state.current_q = 0    
+        st.session_state.score = 0        
+        st.session_state.answered = False 
+        st.session_state.choice = None    
+        st.session_state.results = []     
 
-    # Kiểm tra nếu đã làm xong hết câu hỏi
     if st.session_state.current_q >= len(df):
         st.success("🎉 Bạn đã hoàn thành bài kiểm tra!")
         st.info(f"**Số câu đúng: {st.session_state.score}/{len(df)}**")
@@ -196,11 +231,9 @@ def render_quiz_step_by_step(df, file_name):
     idx = st.session_state.current_q
     row = df.iloc[idx]
     
-    # In câu hỏi
     st.markdown(f"**Câu {idx + 1}/{len(df)}: {row['Câu hỏi']}**")
     options_display = {"A": f"A. {row['Đáp án A']}", "B": f"B. {row['Đáp án B']}", "C": f"C. {row['Đáp án C']}", "D": f"D. {row['Đáp án D']}"}
 
-    # Nếu chưa trả lời câu này -> Hiện form cho chọn
     if not st.session_state.answered:
         with st.form(key=f"step_form_{idx}"):
             choice = st.radio("Chọn đáp án:", ["A", "B", "C", "D"], format_func=lambda x: options_display[x], index=None, label_visibility="collapsed")
@@ -214,18 +247,16 @@ def render_quiz_step_by_step(df, file_name):
                     st.session_state.answered = True
                     st.rerun()
     
-    # Nếu đã trả lời -> Hiện kết quả của câu đó và nút Next
     else:
         st.radio("Bạn đã chọn:", ["A", "B", "C", "D"], format_func=lambda x: options_display[x], index=["A", "B", "C", "D"].index(st.session_state.choice), disabled=True, label_visibility="collapsed")
-        
         correct_answer = str(row['Đáp án đúng']).strip().upper()
+        
         if st.session_state.choice == correct_answer:
             st.success("✅ Chính xác!")
         else:
             st.error(f"❌ Sai rồi. Đáp án đúng là {correct_answer}")
             
         if st.button("Câu tiếp theo ➡️", type="primary"):
-            # Cập nhật điểm trước khi sang câu mới
             if st.session_state.choice == correct_answer:
                 st.session_state.score += 1
             st.session_state.current_q += 1
